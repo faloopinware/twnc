@@ -1,18 +1,16 @@
-import streamlit as st
+#!/usr/bin/env python3
+"""
+Professional Play Formatter
+Converts inconsistently formatted plays to industry-standard screenplay format
+Handles Word documents (.docx) and Google Docs exports
+"""
+
 import re
+import sys
 import subprocess
 import json
-import tempfile
-import os
 from pathlib import Path
-from typing import List, Dict
-
-# Page configuration
-st.set_page_config(
-    page_title="Play Formatter",
-    page_icon="🎭",
-    layout="centered"
-)
+from typing import List, Dict, Optional
 
 class PlayFormatter:
     """Main formatter class that handles play parsing and formatting"""
@@ -31,47 +29,6 @@ class PlayFormatter:
     def __init__(self):
         self.character_names = set()
         self.elements = []
-    
-    def download_google_doc(self, url: str) -> str:
-        """Download a Google Doc as .docx and return the file path"""
-        import requests
-        import re
-        
-        # Extract document ID from URL
-        patterns = [
-            r'/document/d/([a-zA-Z0-9-_]+)',
-            r'id=([a-zA-Z0-9-_]+)'
-        ]
-        
-        doc_id = None
-        for pattern in patterns:
-            match = re.search(pattern, url)
-            if match:
-                doc_id = match.group(1)
-                break
-        
-        if not doc_id:
-            raise Exception("Invalid Google Doc URL. Please check the link and try again.")
-        
-        # Create export URL
-        export_url = f"https://docs.google.com/document/d/{doc_id}/export?format=docx"
-        
-        # Download the file
-        try:
-            response = requests.get(export_url, timeout=30)
-            response.raise_for_status()
-        except requests.exceptions.RequestException as e:
-            raise Exception(
-                "Could not download Google Doc. Make sure:\n"
-                "1. The link is correct\n"
-                "2. The document is shared with 'Anyone with the link can view'\n"
-                f"Error: {str(e)}"
-            )
-        
-        # Save to temp file
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as tmp_file:
-            tmp_file.write(response.content)
-            return tmp_file.name
         
     def extract_text_from_docx(self, docx_path: str) -> str:
         """Extract plain text from .docx file using pandoc"""
@@ -84,31 +41,9 @@ class PlayFormatter:
             )
             return result.stdout
         except subprocess.CalledProcessError as e:
-            raise Exception(f"Could not extract text from file: {e}")
-    
-    def extract_text_from_pdf(self, pdf_path: str) -> str:
-        """Extract plain text from .pdf file using PyMuPDF"""
-        try:
-            import fitz  # PyMuPDF
-            doc = fitz.open(pdf_path)
-            text = ""
-            for page in doc:
-                text += page.get_text()
-            doc.close()
-            return text
-        except ImportError:
-            raise Exception("PyMuPDF not installed. Please add 'PyMuPDF' to requirements.txt")
-        except Exception as e:
-            raise Exception(f"Could not extract text from PDF: {e}")
-    
-    def extract_text_from_file(self, file_path: str) -> str:
-        """Extract text from either .docx or .pdf file"""
-        if file_path.lower().endswith('.pdf'):
-            return self.extract_text_from_pdf(file_path)
-        elif file_path.lower().endswith('.docx'):
-            return self.extract_text_from_docx(file_path)
-        else:
-            raise Exception("Unsupported file format. Please use .docx or .pdf")
+            print(f"Error: Could not extract text from {docx_path}")
+            print("Make sure the file is a valid .docx file")
+            sys.exit(1)
     
     def extract_metadata(self, text: str) -> Dict:
         """Extract play metadata from the beginning of the text"""
@@ -205,44 +140,58 @@ class PlayFormatter:
         # First pass: identify character names
         self.identify_character_names(text)
         
-        # Find where the actual play content starts
+        # Find where the actual play content starts (after title, author, etc.)
         start_idx = 0
         for i, line in enumerate(lines):
+            # Look for first character name or "ACT" or "SCENE"
             if (line.strip() in self.character_names or 
                 re.match(r'^(ACT|SCENE)', line.strip(), re.IGNORECASE)):
-                start_idx = max(0, i - 1)
+                start_idx = max(0, i - 1)  # Include one line before for context
                 break
         
         i = start_idx
         while i < len(lines):
             line = lines[i].strip()
             
+            # Skip empty lines
             if not line:
                 i += 1
                 continue
             
             # Check for scene/act headings
             if re.match(r'^(ACT|SCENE|INT\.|EXT\.)', line, re.IGNORECASE):
-                elements.append({'type': 'scene_heading', 'text': line.upper()})
+                elements.append({
+                    'type': 'scene_heading',
+                    'text': line.upper()
+                })
                 i += 1
                 continue
             
             # Check for "LIGHTS UP" style openings
             if 'LIGHTS UP' in line.upper():
-                elements.append({'type': 'action', 'text': line})
+                elements.append({
+                    'type': 'action',
+                    'text': line
+                })
                 i += 1
                 continue
             
             # Check for standalone "Beat."
             if line.strip() in ['Beat.', 'Beat', 'beat.', 'beat']:
-                elements.append({'type': 'action', 'text': 'Beat.'})
+                elements.append({
+                    'type': 'action',
+                    'text': 'Beat.'
+                })
                 i += 1
                 continue
             
             # Check if this is a character name
             if line in self.character_names:
                 char_name = line
-                elements.append({'type': 'character', 'text': char_name})
+                elements.append({
+                    'type': 'character',
+                    'text': char_name
+                })
                 
                 i += 1
                 
@@ -250,45 +199,74 @@ class PlayFormatter:
                 while i < len(lines):
                     next_line = lines[i].strip()
                     
+                    # Empty line - might be end of this character's speech
                     if not next_line:
                         i += 1
+                        # Check if there's more after the empty line
                         if i < len(lines) and lines[i].strip():
+                            # If next non-empty line is another character, we're done
                             if lines[i].strip() in self.character_names:
                                 break
+                            # If it's an action line (character doing something), we're done
                             if self.is_action_line(lines[i].strip()):
                                 break
                         continue
                     
+                    # Next character name - end of current character's speech
                     if next_line in self.character_names:
                         break
                     
+                    # Scene heading - end of speech
                     if re.match(r'^(ACT|SCENE)', next_line, re.IGNORECASE):
                         break
                     
-                    # Check if line starts with parenthetical
+                    # Check if line starts with parenthetical (stage direction on own line)
                     if next_line.startswith('(') and ')' in next_line:
+                        # Check if there's dialogue after the parenthetical on same line
                         paren_end = next_line.find(')')
                         if paren_end < len(next_line) - 1:
                             # Inline parenthetical with dialogue
-                            elements.append({'type': 'dialogue', 'text': next_line})
+                            elements.append({
+                                'type': 'dialogue',
+                                'text': next_line
+                            })
                         else:
                             # Standalone parenthetical
                             dir_text = next_line.strip('()')
-                            elements.append({'type': 'stage_direction', 'text': dir_text})
+                            elements.append({
+                                'type': 'stage_direction',
+                                'text': dir_text
+                            })
+                    # Stage direction word at start of line (like "softly", "yelling")
                     elif self.is_stage_direction(next_line) and not ' ' in next_line[:15]:
-                        elements.append({'type': 'stage_direction', 'text': next_line})
+                        # Single word stage direction
+                        elements.append({
+                            'type': 'stage_direction',
+                            'text': next_line
+                        })
+                    # Regular dialogue
                     else:
-                        elements.append({'type': 'dialogue', 'text': next_line})
+                        elements.append({
+                            'type': 'dialogue',
+                            'text': next_line
+                        })
                     
                     i += 1
                 
                 continue
             
-            # Action/description lines
+            # Action/description lines (character doing something)
             if self.is_action_line(line):
-                elements.append({'type': 'action', 'text': line})
+                elements.append({
+                    'type': 'action',
+                    'text': line
+                })
+            # Default to action if we can't categorize it
             elif line and not line.isupper() and len(line) > 5:
-                elements.append({'type': 'action', 'text': line})
+                elements.append({
+                    'type': 'action',
+                    'text': line
+                })
             
             i += 1
         
@@ -299,7 +277,7 @@ class PlayFormatter:
         
         # Create JavaScript code for docx generation
         js_code = '''
-const { Document, Packer, Paragraph, TextRun, AlignmentType } = require('docx');
+const { Document, Packer, Paragraph, TextRun, AlignmentType, PageBreak } = require('docx');
 const fs = require('fs');
 
 const metadata = ''' + json.dumps(metadata) + ''';
@@ -351,9 +329,10 @@ function createTitlePage() {
     ];
 }
 
-// Create play content
+// Create play content with proper formatting
 function createPlayContent() {
     const content = [];
+    let pageNumber = 1;
     
     for (let i = 0; i < elements.length; i++) {
         const element = elements[i];
@@ -373,6 +352,7 @@ function createPlayContent() {
                 break;
             
             case 'character':
+                // Character names are CENTERED
                 content.push(new Paragraph({
                     alignment: AlignmentType.CENTER,
                     spacing: { before: 240, after: 120 },
@@ -390,7 +370,6 @@ function createPlayContent() {
                 let dialogueText = element.text;
                 let dialogueChildren = [];
                 let lastIndex = 0;
-                // Find parenthetical expressions
                 let regex = /\\([^)]+\\)/g;
                 let match;
                 
@@ -435,13 +414,14 @@ function createPlayContent() {
                 break;
             
             case 'stage_direction':
+                // Stage directions (parentheticals) are INDENTED and italicized
                 let dirText = element.text;
                 if (!dirText.startsWith('(')) {
                     dirText = '(' + dirText + ')';
                 }
                 content.push(new Paragraph({
                     spacing: { before: 0, after: 120 },
-                    indent: { left: 1440 },
+                    indent: { left: 1440 },  // Indent stage directions significantly
                     children: [new TextRun({ 
                         text: dirText, 
                         italics: true, 
@@ -452,9 +432,10 @@ function createPlayContent() {
                 break;
             
             case 'action':
+                // Action lines are INDENTED (like stage directions) and italicized
                 content.push(new Paragraph({
                     spacing: { before: 120, after: 120 },
-                    indent: { left: 1440 },
+                    indent: { left: 1440 },  // Indented like stage directions
                     children: [new TextRun({ 
                         text: element.text, 
                         italics: true, 
@@ -484,11 +465,11 @@ const doc = new Document({
         properties: {
             page: {
                 size: { 
-                    width: 12240,
-                    height: 15840
+                    width: 12240,  // 8.5 inches
+                    height: 15840   // 11 inches
                 },
                 margin: { 
-                    top: 1440,
+                    top: 1440,    // 1 inch
                     right: 1440, 
                     bottom: 1440, 
                     left: 1440 
@@ -504,188 +485,79 @@ const doc = new Document({
 
 Packer.toBuffer(doc).then(buffer => {
     fs.writeFileSync("''' + output_path + '''", buffer);
+    console.log("✓ Formatted play created successfully!");
 });
 '''
         
         # Write and execute JavaScript
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False) as js_file:
-            js_file.write(js_code)
-            js_path = js_file.name
+        js_file = '/home/claude/format_play.js'
+        with open(js_file, 'w') as f:
+            f.write(js_code)
         
         try:
-            subprocess.run(['node', js_path], check=True, capture_output=True)
-        finally:
-            os.unlink(js_path)
+            subprocess.run(['node', js_file], check=True, capture_output=True)
+        except subprocess.CalledProcessError as e:
+            print(f"Error creating docx: {e}")
+            sys.exit(1)
 
 
-# Streamlit UI
-st.title("🎭 Professional Play Formatter")
-st.markdown("### Convert your plays to professional industry-standard formatting")
-
-st.markdown("""
-Upload a file or paste a Google Doc link to automatically format with:
-- **Character names**: CENTERED and ALL CAPS
-- **Stage directions**: INDENTED and italicized
-- **Dialogue**: LEFT-ALIGNED with inline parentheticals
-- **Action lines**: INDENTED and italicized
-- **Font**: Times New Roman 12pt
-
-**Supports**: Word documents (.docx), PDFs, and Google Docs (via link)
-""")
-
-st.divider()
-
-# Two input options
-st.markdown("### Choose how to upload your play:")
-
-input_method = st.radio(
-    "Select input method:",
-    ["Upload a file from my computer", "Paste a Google Doc link"],
-    label_visibility="collapsed"
-)
-
-if input_method == "Upload a file from my computer":
-    # File upload
-    uploaded_file = st.file_uploader(
-        "Upload your play (.docx or .pdf file)", 
-        type=['docx', 'pdf'],
-        help="Upload a Microsoft Word document (.docx) or PDF file"
-    )
-    gdoc_url = None
-else:
-    # Google Doc URL input
-    uploaded_file = None
-    gdoc_url = st.text_input(
-        "Paste your Google Doc link here:",
-        placeholder="https://docs.google.com/document/d/...",
-        help="Make sure your document is shared with 'Anyone with the link can view'"
-    )
+def main():
+    print("=" * 60)
+    print("PROFESSIONAL PLAY FORMATTER")
+    print("Converts inconsistently formatted plays to industry standard")
+    print("=" * 60)
+    print()
     
-    if gdoc_url:
-        st.info("📝 **Important**: Make sure your Google Doc is set to 'Anyone with the link can view'")
-        with st.expander("How to share your Google Doc"):
-            st.markdown("""
-            1. Open your Google Doc
-            2. Click the **Share** button (top right)
-            3. Click **"Change to anyone with the link"**
-            4. Make sure it says **"Anyone with the link"** and **"Viewer"**
-            5. Click **Done**
-            6. Copy the URL from your browser and paste it above
-            """)
+    if len(sys.argv) < 2:
+        print("Usage: python play_formatter.py <input.docx> [output.docx]")
+        print()
+        print("Example:")
+        print("  python play_formatter.py my_play.docx")
+        print("  python play_formatter.py my_play.docx formatted_play.docx")
+        sys.exit(1)
+    
+    input_file = sys.argv[1]
+    output_file = sys.argv[2] if len(sys.argv) > 2 else input_file.replace('.docx', '_FORMATTED.docx')
+    
+    # Ensure output has .docx extension
+    if not output_file.endswith('.docx'):
+        output_file += '.docx'
+    
+    if not Path(input_file).exists():
+        print(f"✗ Error: Input file '{input_file}' not found")
+        sys.exit(1)
+    
+    if not input_file.endswith('.docx'):
+        print(f"✗ Error: Input file must be a .docx file")
+        print(f"  If you have a PDF, please convert it to Word format first")
+        sys.exit(1)
+    
+    print(f"📄 Input file:  {input_file}")
+    print(f"📝 Output file: {output_file}")
+    print()
+    print("Processing...")
+    
+    # Create formatter and process
+    formatter = PlayFormatter()
+    
+    # Extract and parse
+    text = formatter.extract_text_from_docx(input_file)
+    metadata = formatter.extract_metadata(text)
+    elements = formatter.parse_play(text)
+    
+    print(f"✓ Identified {len(elements)} play elements")
+    print(f"✓ Found {len(formatter.character_names)} characters")
+    print(f"✓ Title: {metadata.get('title', 'Unknown')}")
+    print(f"✓ Author: {metadata.get('author', 'Unknown')}")
+    print()
+    
+    # Create formatted output
+    formatter.create_formatted_docx(elements, metadata, output_file)
+    print(f"✓ Formatted play saved to: {output_file}")
+    print()
+    print("Done! Your play is now professionally formatted.")
+    print("=" * 60)
 
-if uploaded_file is not None or gdoc_url:
-    with st.spinner('Formatting your play...'):
-        try:
-            # Handle Google Doc URL
-            if gdoc_url:
-                if not gdoc_url.strip():
-                    st.warning("Please paste a Google Doc URL")
-                    st.stop()
-                
-                formatter = PlayFormatter()
-                input_path = formatter.download_google_doc(gdoc_url)
-                file_name = "Google_Doc"
-            # Handle file upload
-            else:
-                # Determine file extension
-                file_ext = '.pdf' if uploaded_file.name.lower().endswith('.pdf') else '.docx'
-                
-                # Save uploaded file to temp location
-                with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_input:
-                    tmp_input.write(uploaded_file.getvalue())
-                    input_path = tmp_input.name
-                
-                file_name = uploaded_file.name.replace('.docx', '').replace('.pdf', '')
-                formatter = PlayFormatter()
-            
-            # Create output path
-            output_path = tempfile.mktemp(suffix='_FORMATTED.docx')
-            
-            # Format the play
-            text = formatter.extract_text_from_file(input_path)  # Now handles both PDF and DOCX
-            metadata = formatter.extract_metadata(text)
-            elements = formatter.parse_play(text)
-            formatter.create_formatted_docx(elements, metadata, output_path)
-            
-            # Clean up input file
-            os.unlink(input_path)
-            
-            # Show success message
-            st.success('✅ Play formatted successfully!')
-            
-            # Show metadata
-            with st.expander("📋 Play Information"):
-                st.write(f"**Title:** {metadata.get('title', 'Unknown')}")
-                st.write(f"**Author:** {metadata.get('author', 'Unknown')}")
-                st.write(f"**Characters found:** {len(formatter.character_names)}")
-                st.write(f"**Elements processed:** {len(elements)}")
-            
-            # Download button
-            with open(output_path, 'rb') as f:
-                formatted_file = f.read()
-            
-            download_name = f"{file_name}_FORMATTED.docx"
-            
-            st.download_button(
-                label="📥 Download Formatted Play",
-                data=formatted_file,
-                file_name=download_name,
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            )
-            
-            # Clean up output file
-            os.unlink(output_path)
-            
-        except Exception as e:
-            st.error(f"❌ Error formatting play: {str(e)}")
-            st.info("Please make sure your file is a valid .docx document with character names in ALL CAPS.")
 
-st.divider()
-
-# Instructions
-with st.expander("📖 How to Use"):
-    st.markdown("""
-    **Option 1: Upload a file**
-    1. Click "Upload a file from my computer"
-    2. Select your .docx or .pdf file
-    3. Wait for formatting
-    4. Download your formatted play
-    
-    **Option 2: Use a Google Doc link**
-    1. Click "Paste a Google Doc link"
-    2. Share your Google Doc (set to "Anyone with the link can view")
-    3. Copy the URL from your browser
-    4. Paste it in the text box
-    5. Wait for formatting
-    6. Download your formatted play
-    
-    **Tips for best results:**
-    - Character names should be in ALL CAPS in your original file
-    - For Google Docs: File → Download → Microsoft Word (.docx) if you prefer to upload directly
-    - For PDFs: They work, but .docx files usually give better results
-    """)
-
-with st.expander("❓ Troubleshooting"):
-    st.markdown("""
-    **Problem**: "Could not download Google Doc"
-    - Make sure the document is shared with "Anyone with the link can view"
-    - Check that the URL is complete and correct
-    - Try copying the URL again from your browser's address bar
-    
-    **Problem**: "Error formatting play"
-    - Make sure your file is a .docx or PDF (not .doc)
-    - Check that character names are in ALL CAPS
-    
-    **Problem**: Character names not detected
-    - Make sure they're in ALL CAPS and on their own line
-    - The formatter looks for patterns like "KATE" or "TRUDY"
-    
-    **Problem**: Formatting looks wrong
-    - Review the original file for consistency
-    - Make sure stage directions are clearly separated from dialogue
-    
-    **Google Docs tip**: If the link method isn't working, try downloading as .docx and uploading instead
-    """)
-
-st.divider()
-st.caption("Professional Play Formatter v1.0 | Times New Roman 12pt | Industry Standard Format")
+if __name__ == '__main__':
+    main()
