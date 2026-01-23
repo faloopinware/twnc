@@ -280,13 +280,27 @@ class PlayFormatter:
     def create_formatted_docx(self, elements: List[Dict], metadata: Dict, output_path: str):
         """Create professionally formatted .docx file"""
         
-        # Create JavaScript code for docx generation
-        js_code = '''
-const { Document, Packer, Paragraph, TextRun, AlignmentType } = require('docx');
+        # Write data to a JSON file that JavaScript can read
+        data = {
+            'metadata': metadata,
+            'elements': elements,
+            'outputPath': output_path
+        }
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as json_file:
+            json.dump(data, json_file)
+            json_path = json_file.name
+        
+        # Create JavaScript code that reads from the JSON file
+        js_code = f'''
+const {{ Document, Packer, Paragraph, TextRun, AlignmentType }} = require('docx');
 const fs = require('fs');
 
-const metadata = ''' + json.dumps(metadata) + ''';
-const elements = ''' + json.dumps(elements) + ''';
+// Read data from JSON file
+const data = JSON.parse(fs.readFileSync({json.dumps(json_path)}, 'utf8'));
+const metadata = data.metadata;
+const elements = data.elements;
+const outputPath = data.outputPath;
 
 // Create title page
 function createTitlePage() {
@@ -373,11 +387,10 @@ function createPlayContent() {
                 let dialogueText = element.text;
                 let dialogueChildren = [];
                 let lastIndex = 0;
-                // Find parenthetical expressions
-                let regex = /\\([^)]+\\)/g;
+                let parenPattern = /\([^)]+\)/g;
                 let match;
                 
-                while ((match = regex.exec(dialogueText)) !== null) {
+                while ((match = parenPattern.exec(dialogueText)) !== null) {
                     if (match.index > lastIndex) {
                         dialogueChildren.push(new TextRun({ 
                             text: dialogueText.substring(lastIndex, match.index),
@@ -486,7 +499,11 @@ const doc = new Document({
 });
 
 Packer.toBuffer(doc).then(buffer => {
-    fs.writeFileSync("''' + output_path + '''", buffer);
+    fs.writeFileSync(outputPath, buffer);
+    console.log("Document created successfully");
+}).catch(err => {
+    console.error("Error creating document:", err);
+    process.exit(1);
 });
 '''
         
@@ -496,9 +513,20 @@ Packer.toBuffer(doc).then(buffer => {
             js_path = js_file.name
         
         try:
-            subprocess.run(['node', js_path], check=True, capture_output=True)
+            result = subprocess.run(['node', js_path], check=True, capture_output=True, text=True, timeout=30)
+        except subprocess.CalledProcessError as e:
+            # Print detailed error
+            error_msg = f"Node.js error:\nSTDOUT: {e.stdout}\nSTDERR: {e.stderr}"
+            raise Exception(f"Could not create formatted document: {error_msg}")
+        except subprocess.TimeoutExpired:
+            raise Exception("Document creation timed out after 30 seconds")
         finally:
-            os.unlink(js_path)
+            # Clean up temp files
+            try:
+                os.unlink(js_path)
+                os.unlink(json_path)
+            except:
+                pass
 
 
 # Streamlit UI
