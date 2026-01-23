@@ -86,29 +86,12 @@ class PlayFormatter:
         except subprocess.CalledProcessError as e:
             raise Exception(f"Could not extract text from file: {e}")
     
-    def extract_text_from_pdf(self, pdf_path: str) -> str:
-        """Extract plain text from .pdf file using PyMuPDF"""
-        try:
-            import fitz  # PyMuPDF
-            doc = fitz.open(pdf_path)
-            text = ""
-            for page in doc:
-                text += page.get_text()
-            doc.close()
-            return text
-        except ImportError:
-            raise Exception("PyMuPDF not installed. Please add 'PyMuPDF' to requirements.txt")
-        except Exception as e:
-            raise Exception(f"Could not extract text from PDF: {e}")
-    
     def extract_text_from_file(self, file_path: str) -> str:
-        """Extract text from either .docx or .pdf file"""
-        if file_path.lower().endswith('.pdf'):
-            return self.extract_text_from_pdf(file_path)
-        elif file_path.lower().endswith('.docx'):
+        """Extract text from .docx file"""
+        if file_path.lower().endswith('.docx'):
             return self.extract_text_from_docx(file_path)
         else:
-            raise Exception("Unsupported file format. Please use .docx or .pdf")
+            raise Exception("Unsupported file format. Please use .docx files")
     
     def extract_metadata(self, text: str) -> Dict:
         """Extract play metadata from the beginning of the text"""
@@ -523,7 +506,7 @@ st.title("🎭 Professional Play Formatter")
 st.markdown("### Convert your plays to professional industry-standard formatting")
 
 st.markdown("""
-**Supports**: Word documents (.docx), PDFs, and Google Docs (via link)
+**Supports**: Word documents (.docx) and Google Docs (via link)
 """)
 
 st.divider()
@@ -540,9 +523,9 @@ input_method = st.radio(
 if input_method == "Upload a file from my computer":
     # File upload
     uploaded_file = st.file_uploader(
-        "Upload your play (.docx or .pdf file)", 
-        type=['docx', 'pdf'],
-        help="Upload a Microsoft Word document (.docx) or PDF file"
+        "Upload your play (.docx file)", 
+        type=['docx'],
+        help="Upload a Microsoft Word document (.docx)"
     )
     gdoc_url = None
 else:
@@ -580,22 +563,19 @@ if uploaded_file is not None or gdoc_url:
                 file_name = "Google_Doc"
             # Handle file upload
             else:
-                # Determine file extension
-                file_ext = '.pdf' if uploaded_file.name.lower().endswith('.pdf') else '.docx'
-                
                 # Save uploaded file to temp location
-                with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_input:
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as tmp_input:
                     tmp_input.write(uploaded_file.getvalue())
                     input_path = tmp_input.name
                 
-                file_name = uploaded_file.name.replace('.docx', '').replace('.pdf', '')
+                file_name = uploaded_file.name.replace('.docx', '')
                 formatter = PlayFormatter()
             
             # Create output path
             output_path = tempfile.mktemp(suffix='_FORMATTED.docx')
             
             # Format the play
-            text = formatter.extract_text_from_file(input_path)  # Now handles both PDF and DOCX
+            text = formatter.extract_text_from_file(input_path)
             metadata = formatter.extract_metadata(text)
             elements = formatter.parse_play(text)
             formatter.create_formatted_docx(elements, metadata, output_path)
@@ -640,7 +620,7 @@ with st.expander("📖 How to Use"):
     st.markdown("""
     **Option 1: Upload a file**
     1. Click "Upload a file from my computer"
-    2. Select your .docx or .pdf file
+    2. Select your .docx file
     3. Wait for formatting
     4. Download your formatted play
     
@@ -655,7 +635,6 @@ with st.expander("📖 How to Use"):
     **Tips for best results:**
     - Character names should be in ALL CAPS in your original file
     - For Google Docs: File → Download → Microsoft Word (.docx) if you prefer to upload directly
-    - For PDFs: They work, but .docx files usually give better results
     """)
 
 with st.expander("❓ Troubleshooting"):
@@ -666,7 +645,7 @@ with st.expander("❓ Troubleshooting"):
     - Try copying the URL again from your browser's address bar
     
     **Problem**: "Error formatting play"
-    - Make sure your file is a .docx or PDF (not .doc)
+    - Make sure your file is a .docx (not .doc)
     - Check that character names are in ALL CAPS
     
     **Problem**: Character names not detected
