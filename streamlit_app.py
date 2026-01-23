@@ -292,12 +292,12 @@ class PlayFormatter:
             json_path = json_file.name
         
         # Create JavaScript code that reads from the JSON file
-        js_code = f'''
-const {{ Document, Packer, Paragraph, TextRun, AlignmentType }} = require('docx');
+        js_code = r'''
+const { Document, Packer, Paragraph, TextRun, AlignmentType } = require('docx');
 const fs = require('fs');
 
 // Read data from JSON file
-const data = JSON.parse(fs.readFileSync({json.dumps(json_path)}, 'utf8'));
+const data = JSON.parse(fs.readFileSync(''' + json.dumps(json_path) + r''', 'utf8'));
 const metadata = data.metadata;
 const elements = data.elements;
 const outputPath = data.outputPath;
