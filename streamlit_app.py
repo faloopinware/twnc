@@ -523,13 +523,6 @@ st.title("🎭 Professional Play Formatter")
 st.markdown("### Convert your plays to professional industry-standard formatting")
 
 st.markdown("""
-Upload a file or paste a Google Doc link to automatically format with:
-- **Character names**: CENTERED and ALL CAPS
-- **Stage directions**: INDENTED and italicized
-- **Dialogue**: LEFT-ALIGNED with inline parentheticals
-- **Action lines**: INDENTED and italicized
-- **Font**: Times New Roman 12pt
-
 **Supports**: Word documents (.docx), PDFs, and Google Docs (via link)
 """)
 
