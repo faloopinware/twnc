@@ -31,8 +31,8 @@ with st.sidebar:
     - We'll detect most info automatically
     
     **3️⃣ Download**
-    - Choose .DOCX or PDF format
-    - Get your professionally formatted script!
+    - Get your professionally formatted .DOCX file
+    - Open in Word, Google Docs, or any word processor
     
     ---
     
@@ -46,65 +46,18 @@ with st.sidebar:
     """)
 
 def extract_text_from_pdf(pdf_file):
-    """Extract text from PDF file and reconstruct paragraphs"""
+    """Extract text from PDF - keep lines separate, let parser handle structure"""
     try:
         pdf_reader = PyPDF2.PdfReader(pdf_file)
-        all_lines = []
+        all_text = []
         
         for page in pdf_reader.pages:
             page_text = page.extract_text()
-            raw_lines = [line.strip() for line in page_text.split('\n') if line.strip()]
-            
-            # Reconstruct by merging fragments
-            i = 0
-            while i < len(raw_lines):
-                line = raw_lines[i]
-                
-                # Skip page numbers
-                if line.isdigit():
-                    i += 1
-                    continue
-                
-                # Start building a complete line
-                complete_line = line
-                i += 1
-                
-                # Keep adding words until we hit a natural break
-                while i < len(raw_lines):
-                    next_line = raw_lines[i]
-                    
-                    # Stop if next line is a page number
-                    if next_line.isdigit():
-                        break
-                    
-                    # Stop if next line is ALL CAPS (likely character name or heading)
-                    if next_line.isupper() and len(next_line.split()) >= 2:
-                        break
-                    
-                    # Stop if current line ends with sentence-ending punctuation
-                    if complete_line.rstrip().endswith(('.', '!', '?', ':')):
-                        break
-                    
-                    # Stop if next line is a stage direction label
-                    if next_line in ['Yells', 'Softly', 'Laughing', 'Smiling', 'Pauses', 
-                                     'Squints', 'Shrugs', 'Opens', 'Looks', 'Takes', 'Reaches',
-                                     'Grabs', 'Checks', 'Beat', 'Pause', 'Whistle blows']:
-                        break
-                    
-                    # Add the next fragment
-                    if next_line in [',', '.', '!', '?', ':', ';']:
-                        complete_line += next_line
-                    else:
-                        complete_line += " " + next_line
-                    i += 1
-                    
-                    # Stop after reasonable length
-                    if len(complete_line) > 200:
-                        break
-                
-                all_lines.append(complete_line)
+            all_text.append(page_text)
         
-        return "\n".join(all_lines)
+        # Join all pages and return
+        return "\n".join(all_text)
+    
     except Exception as e:
         st.error(f"Error reading PDF: {str(e)}")
         return None
@@ -130,129 +83,112 @@ def extract_text_from_txt(txt_file):
         return None
 
 def parse_script_intelligently(text):
-    """Parse script text and identify elements"""
-    lines = text.split('\n')
-    elements = []
+    """Parse script text - handles messy PDF extraction"""
+    raw_lines = [l.strip() for l in text.split('\n') if l.strip() and not l.strip().isdigit()]
     
-    # Try to extract title and author from first few lines
+    # Common character names
+    common_names = {'JOHN', 'MARY', 'KATE', 'MIKE', 'SARAH', 'TOM', 'JANE', 'BOB',
+                   'KATHRYN', 'ANGELA', 'MICHAEL', 'SUSAN', 'DAVID', 'LISA', 'TRUDY',
+                   'PETER', 'EMMA', 'CHRIS', 'ANNA', 'JAMES'}
+    
+    # First, merge fragments into logical lines
+    merged_lines = []
+    i = 0
+    while i < len(raw_lines):
+        line = raw_lines[i]
+        
+        # Check if this is a character name
+        is_char_name = False
+        if line.isupper() and not line.startswith('('):
+            words = len(line.split())
+            if 2 <= words <= 5 or (words == 1 and line in common_names):
+                # Look ahead - if next line isn't all caps, this is a character name
+                if i + 1 < len(raw_lines):
+                    next_line = raw_lines[i + 1]
+                    if not next_line.isupper() or next_line.startswith('('):
+                        is_char_name = True
+        
+        if is_char_name:
+            merged_lines.append(line)
+            i += 1
+        else:
+            # Merge short fragments
+            merged = line
+            i += 1
+            
+            while i < len(raw_lines):
+                next_line = raw_lines[i]
+                
+                # Stop if next is character name
+                if next_line.isupper() and not next_line.startswith('('):
+                    nw = len(next_line.split())
+                    if 2 <= nw <= 5 or (nw == 1 and next_line in common_names):
+                        if i + 1 < len(raw_lines) and not raw_lines[i + 1].isupper():
+                            break
+                
+                # Stop if we have complete sentence
+                if merged.rstrip().endswith(('.', '!', '?', ')')):
+                    break
+                
+                # Stop if long enough
+                if len(merged) > 200:
+                    break
+                
+                # Merge the fragment
+                if next_line in [',', '.', '!', '?', ':', ';']:
+                    merged += next_line
+                else:
+                    merged += " " + next_line
+                i += 1
+            
+            merged_lines.append(merged)
+    
+    # Now parse the merged lines
+    elements = []
     title = None
     author = None
     scene_info = None
-    script_start_index = 0
+    script_start = 0
     
-    # Look for title in first 10 lines
-    for i, line in enumerate(lines[:10]):
-        line = line.strip()
-        if not line:
-            continue
-            
-        # Check if this might be the title (short, often all caps or title case)
-        if not title and len(line) < 50 and not line.startswith('By'):
+    # Find title, author, scene info
+    for i, line in enumerate(merged_lines[:15]):
+        if not title and len(line) < 60 and not line.startswith('By') and not line.isupper():
             title = line
-            script_start_index = i + 1
-            continue
-        
-        # Check for author (often has "By" or appears after title)
-        if title and not author:
+            script_start = i + 1
+        elif title and not author:
             if line.startswith('By'):
                 author = line.replace('By', '').strip()
-                script_start_index = i + 1
-                continue
-            elif i == script_start_index and len(line) < 50:
+                script_start = i + 1
+            elif len(line) < 60 and not line.isupper():
                 author = line
-                script_start_index = i + 1
-                continue
-        
-        # Check for scene info
-        if re.match(r'(Scene|ACT|Act)', line, re.IGNORECASE):
+                script_start = i + 1
+        elif re.match(r'(Scene|ACT|Act)', line, re.IGNORECASE):
             scene_info = line
-            script_start_index = i + 1
+            script_start = i + 1
             break
     
-    # Now parse the actual script content
-    i = script_start_index
-    while i < len(lines):
-        line = lines[i].strip()
-        
-        if not line:
-            i += 1
-            continue
-        
-        # Skip page numbers and headers/footers
-        if re.match(r'^\d+$', line):
-            i += 1
-            continue
-        
+    # Parse script content
+    for line in merged_lines[script_start:]:
         # Scene headings
-        if re.match(r'^(ACT|SCENE|PROLOGUE|EPILOGUE|INT\.|EXT\.)', line, re.IGNORECASE):
-            elements.append({
-                'type': 'scene_heading',
-                'text': line
-            })
-            i += 1
-            continue
-        
-        # Setting/stage directions at start
-        if re.match(r'^(SETTING:|TIME:|AT RISE|LIGHTS UP|\()', line, re.IGNORECASE):
-            elements.append({
-                'type': 'setting',
-                'text': line
-            })
-            i += 1
-            continue
-        
-        # Character names - all caps, short line, possibly followed by dialogue
-        if line.isupper() and 2 <= len(line.split()) <= 5:
-            # Check if next non-empty line exists and isn't all caps
-            next_idx = i + 1
-            while next_idx < len(lines) and not lines[next_idx].strip():
-                next_idx += 1
-            
-            if next_idx < len(lines):
-                next_line = lines[next_idx].strip()
-                # If next line is not all caps or is stage direction, this is a character name
-                if not next_line.isupper() or next_line.startswith('('):
-                    elements.append({
-                        'type': 'character',
-                        'text': line
-                    })
-                    i += 1
-                    continue
-        
-        # Standalone stage directions
-        if line.startswith('(') and line.endswith(')'):
-            # Check if previous element was character name
+        if re.match(r'^(ACT|SCENE|PROLOGUE|EPILOGUE)', line, re.IGNORECASE):
+            elements.append({'type': 'scene_heading', 'text': line})
+        # Setting
+        elif re.match(r'^(SETTING:|TIME:|AT RISE:|LIGHTS UP)', line, re.IGNORECASE):
+            elements.append({'type': 'setting', 'text': line})
+        # Character names
+        elif line.isupper() and not line.startswith('('):
+            words = len(line.split())
+            if 2 <= words <= 5 or (words == 1 and line in common_names):
+                elements.append({'type': 'character', 'text': line})
+        # Stage directions
+        elif line.startswith('(') and line.endswith(')'):
             if elements and elements[-1]['type'] == 'character':
-                # This might be inline with upcoming dialogue
-                elements.append({
-                    'type': 'dialogue',
-                    'text': line
-                })
+                elements.append({'type': 'dialogue', 'text': line})
             else:
-                elements.append({
-                    'type': 'stage_direction',
-                    'text': line
-                })
-            i += 1
-            continue
-        
-        # Stage direction labels (not in parentheses)
-        if re.match(r'^[A-Z][a-z]+( [a-z]+)*$', line) and len(line.split()) <= 4:
-            # Things like "Exits", "Pause", "Beat"
-            if line.lower() in ['beat', 'pause', 'exits', 'enters', 'laughs', 'crying']:
-                elements.append({
-                    'type': 'stage_direction',
-                    'text': f"({line})"
-                })
-                i += 1
-                continue
-        
-        # Everything else is dialogue
-        elements.append({
-            'type': 'dialogue',
-            'text': line
-        })
-        i += 1
+                elements.append({'type': 'stage_direction', 'text': line})
+        # Dialogue
+        else:
+            elements.append({'type': 'dialogue', 'text': line})
     
     return title, author, scene_info, elements
 
@@ -458,79 +394,19 @@ if uploaded_file:
             if not filename:
                 filename = title.replace(' ', '_').lower() if title else "formatted_script"
             
-            st.markdown("**Choose your download format:**")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                if st.button("📄 Download as .DOCX", type="primary", use_container_width=True):
-                    with st.spinner("Creating Word document..."):
-                        formatted_doc = create_formatted_docx(title, author, scene_info, elements)
-                    
-                    st.success("✅ Document created!")
-                    
-                    st.download_button(
-                        label="💾 Save Word Document",
-                        data=formatted_doc,
-                        file_name=f"{filename}.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        use_container_width=True
-                    )
-            
-            with col2:
-                if st.button("📕 Download as PDF", type="secondary", use_container_width=True):
-                    with st.spinner("Creating PDF document..."):
-                        # First create docx
-                        formatted_doc = create_formatted_docx(title, author, scene_info, elements)
-                        
-                        # Try to convert to PDF
-                        try:
-                            import subprocess
-                            import tempfile
-                            import os
-                            
-                            # Save docx temporarily
-                            with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as tmp_docx:
-                                tmp_docx.write(formatted_doc.getvalue())
-                                tmp_docx_path = tmp_docx.name
-                            
-                            # Try to convert with LibreOffice
-                            tmp_pdf_path = tmp_docx_path.replace('.docx', '.pdf')
-                            result = subprocess.run(
-                                ['soffice', '--headless', '--convert-to', 'pdf', '--outdir', 
-                                 os.path.dirname(tmp_docx_path), tmp_docx_path],
-                                capture_output=True,
-                                timeout=30
-                            )
-                            
-                            if os.path.exists(tmp_pdf_path):
-                                with open(tmp_pdf_path, 'rb') as pdf_file:
-                                    pdf_data = pdf_file.read()
-                                
-                                st.success("✅ PDF created!")
-                                
-                                st.download_button(
-                                    label="💾 Save PDF Document",
-                                    data=pdf_data,
-                                    file_name=f"{filename}.pdf",
-                                    mime="application/pdf",
-                                    use_container_width=True
-                                )
-                                
-                                # Cleanup
-                                os.unlink(tmp_docx_path)
-                                os.unlink(tmp_pdf_path)
-                            else:
-                                raise Exception("PDF conversion failed")
-                        
-                        except Exception as e:
-                            st.warning("⚠️ PDF conversion not available on this platform")
-                            st.info("""
-                            **Alternative: Create PDF manually**
-                            1. Download the .DOCX file (button on left)
-                            2. Open in Microsoft Word or Google Docs
-                            3. File → Save As → PDF
-                            """)
+            if st.button("📄 Download as .DOCX", type="primary", use_container_width=True):
+                with st.spinner("Creating Word document..."):
+                    formatted_doc = create_formatted_docx(title, author, scene_info, elements)
+                
+                st.success("✅ Document created!")
+                
+                st.download_button(
+                    label="💾 Save Word Document",
+                    data=formatted_doc,
+                    file_name=f"{filename}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    use_container_width=True
+                )
             
             st.divider()
             st.success("""
@@ -568,6 +444,6 @@ st.divider()
 st.markdown("""
 <div style='text-align: center; color: #666; font-size: 12px; margin-top: 40px;'>
     <p>The TWNC FaloopinFormatter | Professional Script Reformatting</p>
-    <p>Upload → Enter Details → Download (.DOCX or PDF)</p>
+    <p>Upload → Enter Details → Download (.DOCX)</p>
 </div>
 """, unsafe_allow_html=True)
