@@ -20,10 +20,21 @@ st.markdown("Upload your script and we'll reformat it to professional theatrical
 with st.sidebar:
     st.header("📋 How It Works")
     st.markdown("""
-    **Upload Your Script:**
-    - Upload PDF, DOCX, or TXT file
-    - We'll automatically detect format
-    - Professional formatting applied
+    **3 Simple Steps:**
+    
+    **1️⃣ Upload Your Script**
+    - PDF, DOCX, or TXT file
+    - We'll read and analyze it
+    
+    **2️⃣ Enter Details**
+    - Provide title and author
+    - We'll detect most info automatically
+    
+    **3️⃣ Download**
+    - Choose .DOCX or PDF format
+    - Get your professionally formatted script!
+    
+    ---
     
     **What We Fix:**
     - ✅ Add proper cover page
@@ -32,20 +43,68 @@ with st.sidebar:
     - ✅ Format dialogue (left-aligned)
     - ✅ Format stage directions (italics)
     - ✅ Times New Roman 12pt throughout
-    
-    **Download:**
-    - Get formatted .docx file
-    - Open in Word and Save As PDF if needed
     """)
 
 def extract_text_from_pdf(pdf_file):
-    """Extract text from PDF file"""
+    """Extract text from PDF file and reconstruct paragraphs"""
     try:
         pdf_reader = PyPDF2.PdfReader(pdf_file)
-        text = ""
+        all_lines = []
+        
         for page in pdf_reader.pages:
-            text += page.extract_text() + "\n"
-        return text
+            page_text = page.extract_text()
+            raw_lines = [line.strip() for line in page_text.split('\n') if line.strip()]
+            
+            # Reconstruct by merging fragments
+            i = 0
+            while i < len(raw_lines):
+                line = raw_lines[i]
+                
+                # Skip page numbers
+                if line.isdigit():
+                    i += 1
+                    continue
+                
+                # Start building a complete line
+                complete_line = line
+                i += 1
+                
+                # Keep adding words until we hit a natural break
+                while i < len(raw_lines):
+                    next_line = raw_lines[i]
+                    
+                    # Stop if next line is a page number
+                    if next_line.isdigit():
+                        break
+                    
+                    # Stop if next line is ALL CAPS (likely character name or heading)
+                    if next_line.isupper() and len(next_line.split()) >= 2:
+                        break
+                    
+                    # Stop if current line ends with sentence-ending punctuation
+                    if complete_line.rstrip().endswith(('.', '!', '?', ':')):
+                        break
+                    
+                    # Stop if next line is a stage direction label
+                    if next_line in ['Yells', 'Softly', 'Laughing', 'Smiling', 'Pauses', 
+                                     'Squints', 'Shrugs', 'Opens', 'Looks', 'Takes', 'Reaches',
+                                     'Grabs', 'Checks', 'Beat', 'Pause', 'Whistle blows']:
+                        break
+                    
+                    # Add the next fragment
+                    if next_line in [',', '.', '!', '?', ':', ';']:
+                        complete_line += next_line
+                    else:
+                        complete_line += " " + next_line
+                    i += 1
+                    
+                    # Stop after reasonable length
+                    if len(complete_line) > 200:
+                        break
+                
+                all_lines.append(complete_line)
+        
+        return "\n".join(all_lines)
     except Exception as e:
         st.error(f"Error reading PDF: {str(e)}")
         return None
@@ -333,10 +392,13 @@ def create_formatted_docx(title, author, scene_info, elements):
     return bio
 
 # Main interface
-st.header("📤 Upload Your Script")
+st.header("🎭 Reformat Your Script in 3 Easy Steps")
+
+# STEP 1: Upload
+st.subheader("📤 Step 1: Upload Your Script File")
 
 uploaded_file = st.file_uploader(
-    "Choose your script file",
+    "Choose your script file (PDF, DOCX, or TXT)",
     type=['pdf', 'docx', 'txt'],
     help="Upload a PDF, Word document, or text file"
 )
@@ -364,60 +426,126 @@ if uploaded_file:
             st.text(script_text[:500] + "..." if len(script_text) > 500 else script_text)
         
         # Parse the script
-        with st.spinner("Analyzing and reformatting..."):
+        with st.spinner("Analyzing script structure..."):
             title, author, scene_info, elements = parse_script_intelligently(script_text)
         
-        # Show detected info
-        st.subheader("📋 Detected Information")
+        st.info(f"✨ Detected {len(elements)} script elements" + (f" | Scene: {scene_info}" if scene_info else ""))
         
-        col1, col2, col3 = st.columns(3)
+        # STEP 2: Enter title and author
+        st.divider()
+        st.subheader("✏️ Step 2: Please Enter the Title and Author's Name")
+        
+        col1, col2 = st.columns(2)
         with col1:
-            title = st.text_input("Play Title", value=title or "", help="Edit if needed")
+            title = st.text_input("Play Title*", value=title or "", placeholder="e.g., HAMLET")
         with col2:
-            author = st.text_input("Author", value=author or "", help="Edit if needed")
-        with col3:
-            scene_info = st.text_input("Scene Info", value=scene_info or "", help="Edit if needed")
+            author = st.text_input("Author*", value=author or "", placeholder="e.g., William Shakespeare")
         
-        st.info(f"✨ Detected {len(elements)} script elements")
+        # STEP 3: Download
+        st.divider()
+        st.subheader("📥 Step 3: Download Your Formatted Script")
         
-        # Generate formatted document
-        if st.button("🎭 Generate Formatted Script", type="primary"):
-            if not title or not author:
-                st.warning("⚠️ Please provide both Title and Author")
-            else:
-                with st.spinner("Creating professionally formatted document..."):
-                    formatted_doc = create_formatted_docx(title, author, scene_info, elements)
-                
-                st.success("✅ Document formatted successfully!")
-                
-                # Download button
+        if not title or not author:
+            st.warning("⚠️ Please enter both Title and Author above to continue")
+        else:
+            filename = st.text_input(
+                "Filename (optional - will use title if blank)",
+                value="",
+                placeholder=title.replace(' ', '_').lower() if title else "my_play"
+            )
+            
+            # Use title as filename if not provided
+            if not filename:
                 filename = title.replace(' ', '_').lower() if title else "formatted_script"
-                st.download_button(
-                    label="📥 Download Formatted Script (.docx)",
-                    data=formatted_doc,
-                    file_name=f"{filename}_formatted.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                )
-                
-                st.divider()
-                st.info("""
-                ✨ **Your script has been reformatted with:**
-                - Professional cover page with title and author
-                - Page numbers in upper right corner (starting page 1)
-                - Times New Roman 12pt font throughout
-                - Character names centered (not bold)
-                - Dialogue left-aligned (not indented)
-                - Stage directions properly formatted in italics
-                - Scene/Act info at top of first script page
-                
-                💡 **To create a PDF:**
-                1. Download the .docx file
-                2. Open in Microsoft Word or Google Docs
-                3. File → Save As → PDF
-                """)
+            
+            st.markdown("**Choose your download format:**")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("📄 Download as .DOCX", type="primary", use_container_width=True):
+                    with st.spinner("Creating Word document..."):
+                        formatted_doc = create_formatted_docx(title, author, scene_info, elements)
+                    
+                    st.success("✅ Document created!")
+                    
+                    st.download_button(
+                        label="💾 Save Word Document",
+                        data=formatted_doc,
+                        file_name=f"{filename}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True
+                    )
+            
+            with col2:
+                if st.button("📕 Download as PDF", type="secondary", use_container_width=True):
+                    with st.spinner("Creating PDF document..."):
+                        # First create docx
+                        formatted_doc = create_formatted_docx(title, author, scene_info, elements)
+                        
+                        # Try to convert to PDF
+                        try:
+                            import subprocess
+                            import tempfile
+                            import os
+                            
+                            # Save docx temporarily
+                            with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as tmp_docx:
+                                tmp_docx.write(formatted_doc.getvalue())
+                                tmp_docx_path = tmp_docx.name
+                            
+                            # Try to convert with LibreOffice
+                            tmp_pdf_path = tmp_docx_path.replace('.docx', '.pdf')
+                            result = subprocess.run(
+                                ['soffice', '--headless', '--convert-to', 'pdf', '--outdir', 
+                                 os.path.dirname(tmp_docx_path), tmp_docx_path],
+                                capture_output=True,
+                                timeout=30
+                            )
+                            
+                            if os.path.exists(tmp_pdf_path):
+                                with open(tmp_pdf_path, 'rb') as pdf_file:
+                                    pdf_data = pdf_file.read()
+                                
+                                st.success("✅ PDF created!")
+                                
+                                st.download_button(
+                                    label="💾 Save PDF Document",
+                                    data=pdf_data,
+                                    file_name=f"{filename}.pdf",
+                                    mime="application/pdf",
+                                    use_container_width=True
+                                )
+                                
+                                # Cleanup
+                                os.unlink(tmp_docx_path)
+                                os.unlink(tmp_pdf_path)
+                            else:
+                                raise Exception("PDF conversion failed")
+                        
+                        except Exception as e:
+                            st.warning("⚠️ PDF conversion not available on this platform")
+                            st.info("""
+                            **Alternative: Create PDF manually**
+                            1. Download the .DOCX file (button on left)
+                            2. Open in Microsoft Word or Google Docs
+                            3. File → Save As → PDF
+                            """)
+            
+            st.divider()
+            st.success("""
+            ✨ **Your script will be formatted with:**
+            - Professional cover page with title and author
+            - Page numbers in upper right corner (starting page 1)
+            - Times New Roman 12pt font throughout
+            - Character names centered (not bold)
+            - Dialogue left-aligned (not indented)
+            - Stage directions properly formatted in italics
+            - Scene/Act info at top of first script page
+            """)
 
 else:
-    st.info("👆 Upload a script file to get started")
+    st.info("👆 Upload a script file above to get started")
     
     st.markdown("""
     ### 📝 Supported Formats:
@@ -440,6 +568,6 @@ st.divider()
 st.markdown("""
 <div style='text-align: center; color: #666; font-size: 12px; margin-top: 40px;'>
     <p>The TWNC FaloopinFormatter | Professional Script Reformatting</p>
-    <p>Upload → Reformat → Download</p>
+    <p>Upload → Enter Details → Download (.DOCX or PDF)</p>
 </div>
 """, unsafe_allow_html=True)
