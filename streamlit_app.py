@@ -4,6 +4,7 @@ from docx import Document
 from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from io import BytesIO
+import PyPDF2
 
 # Page configuration
 st.set_page_config(
@@ -13,85 +14,104 @@ st.set_page_config(
 )
 
 st.title("🎭 The TWNC FaloopinFormatter")
-st.markdown("Format your play script to professional theatrical standards")
+st.markdown("Upload your script and we'll reformat it to professional theatrical standards")
 
-# Custom CSS for preview
-st.markdown("""
-<style>
-    .preview-play {
-        font-family: 'Times New Roman', serif;
-        font-size: 12pt;
-        line-height: 1.5;
-        max-width: 700px;
-        margin: 0 auto;
-        background-color: white;
-        padding: 40px;
-        box-shadow: 0 0 10px rgba(0,0,0,0.1);
-    }
-    .preview-character {
-        text-align: center;
-        margin-top: 12pt;
-        margin-bottom: 0;
-    }
-    .preview-dialogue {
-        text-align: left;
-        margin: 0;
-    }
-    .preview-stage {
-        font-style: italic;
-        margin: 6pt 0;
-    }
-    .preview-title {
-        text-align: center;
-        margin: 20px 0;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# Sidebar with instructions
+# Sidebar
 with st.sidebar:
-    st.header("📋 Formatting Guide")
+    st.header("📋 How It Works")
     st.markdown("""
-    **How to format your script:**
+    **Upload Your Script:**
+    - Upload PDF, DOCX, or TXT file
+    - We'll automatically detect format
+    - Professional formatting applied
     
-    - **Title Page:** Enter play title and author
-    - **Scene Info:** Add scene or act information
-    - **Character Names:** Type in ALL CAPS on their own line
-    - **Inline Stage Directions:** Use (parentheses) on same line as dialogue
-    - **Standalone Stage Directions:** Put on separate line in (parentheses)
-    - **Setting:** Opening description in italics
+    **What We Fix:**
+    - ✅ Add proper cover page
+    - ✅ Add page numbers
+    - ✅ Format character names (centered)
+    - ✅ Format dialogue (left-aligned)
+    - ✅ Format stage directions (italics)
+    - ✅ Times New Roman 12pt throughout
     
-    **Example:**
-    ```
-    ACT ONE
-    
-    SETTING: A bedroom at night
-    
-    (JOHN enters nervously)
-    
-    JOHN
-    I can't believe that.
-    
-    MARY
-    (softly) What do you mean?
-    ```
-    
-    **Output Format:**
-    - Cover page with title and author
-    - Page numbers in upper right (starting page 1)
-    - Times New Roman 12pt
-    - Character names centered (not bold)
-    - Dialogue left-aligned (not indented)
+    **Download:**
+    - Get formatted .docx file
+    - Open in Word and Save As PDF if needed
     """)
-    
-    st.info("💡 **Cloud Version**: Exports .docx only. Open in Word and Save As PDF if needed.")
 
-def parse_script_to_structure(text):
-    """Parse raw script text into structured data"""
-    lines = text.strip().split('\n')
+def extract_text_from_pdf(pdf_file):
+    """Extract text from PDF file"""
+    try:
+        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text() + "\n"
+        return text
+    except Exception as e:
+        st.error(f"Error reading PDF: {str(e)}")
+        return None
+
+def extract_text_from_docx(docx_file):
+    """Extract text from DOCX file"""
+    try:
+        doc = Document(docx_file)
+        text = ""
+        for para in doc.paragraphs:
+            text += para.text + "\n"
+        return text
+    except Exception as e:
+        st.error(f"Error reading DOCX: {str(e)}")
+        return None
+
+def extract_text_from_txt(txt_file):
+    """Extract text from TXT file"""
+    try:
+        return txt_file.read().decode('utf-8')
+    except Exception as e:
+        st.error(f"Error reading TXT: {str(e)}")
+        return None
+
+def parse_script_intelligently(text):
+    """Parse script text and identify elements"""
+    lines = text.split('\n')
     elements = []
-    i = 0
     
+    # Try to extract title and author from first few lines
+    title = None
+    author = None
+    scene_info = None
+    script_start_index = 0
+    
+    # Look for title in first 10 lines
+    for i, line in enumerate(lines[:10]):
+        line = line.strip()
+        if not line:
+            continue
+            
+        # Check if this might be the title (short, often all caps or title case)
+        if not title and len(line) < 50 and not line.startswith('By'):
+            title = line
+            script_start_index = i + 1
+            continue
+        
+        # Check for author (often has "By" or appears after title)
+        if title and not author:
+            if line.startswith('By'):
+                author = line.replace('By', '').strip()
+                script_start_index = i + 1
+                continue
+            elif i == script_start_index and len(line) < 50:
+                author = line
+                script_start_index = i + 1
+                continue
+        
+        # Check for scene info
+        if re.match(r'(Scene|ACT|Act)', line, re.IGNORECASE):
+            scene_info = line
+            script_start_index = i + 1
+            break
+    
+    # Now parse the actual script content
+    i = script_start_index
     while i < len(lines):
         line = lines[i].strip()
         
@@ -99,61 +119,96 @@ def parse_script_to_structure(text):
             i += 1
             continue
         
+        # Skip page numbers and headers/footers
+        if re.match(r'^\d+$', line):
+            i += 1
+            continue
+        
         # Scene headings
-        if re.match(r'^(ACT|SCENE|PROLOGUE|EPILOGUE)\s+', line, re.IGNORECASE):
+        if re.match(r'^(ACT|SCENE|PROLOGUE|EPILOGUE|INT\.|EXT\.)', line, re.IGNORECASE):
             elements.append({
                 'type': 'scene_heading',
                 'text': line
             })
-        # Character names (all caps, short, followed by dialogue)
-        elif line.isupper() and len(line.split()) <= 5 and i + 1 < len(lines):
-            next_line = lines[i + 1].strip()
-            if next_line and not next_line.isupper():
-                elements.append({
-                    'type': 'character',
-                    'text': line
-                })
-        # Standalone stage direction
-        elif line.startswith('(') and line.endswith(')'):
-            if elements and elements[-1]['type'] != 'character':
-                elements.append({
-                    'type': 'stage_direction',
-                    'text': line
-                })
-            else:
-                elements.append({
-                    'type': 'dialogue',
-                    'text': line
-                })
-        # Setting/description keywords
-        elif re.match(r'^(SETTING:|TIME:|AT RISE|LIGHTS UP)', line, re.IGNORECASE):
+            i += 1
+            continue
+        
+        # Setting/stage directions at start
+        if re.match(r'^(SETTING:|TIME:|AT RISE|LIGHTS UP|\()', line, re.IGNORECASE):
             elements.append({
                 'type': 'setting',
                 'text': line
             })
-        # Dialogue
-        else:
-            elements.append({
-                'type': 'dialogue',
-                'text': line
-            })
+            i += 1
+            continue
         
+        # Character names - all caps, short line, possibly followed by dialogue
+        if line.isupper() and 2 <= len(line.split()) <= 5:
+            # Check if next non-empty line exists and isn't all caps
+            next_idx = i + 1
+            while next_idx < len(lines) and not lines[next_idx].strip():
+                next_idx += 1
+            
+            if next_idx < len(lines):
+                next_line = lines[next_idx].strip()
+                # If next line is not all caps or is stage direction, this is a character name
+                if not next_line.isupper() or next_line.startswith('('):
+                    elements.append({
+                        'type': 'character',
+                        'text': line
+                    })
+                    i += 1
+                    continue
+        
+        # Standalone stage directions
+        if line.startswith('(') and line.endswith(')'):
+            # Check if previous element was character name
+            if elements and elements[-1]['type'] == 'character':
+                # This might be inline with upcoming dialogue
+                elements.append({
+                    'type': 'dialogue',
+                    'text': line
+                })
+            else:
+                elements.append({
+                    'type': 'stage_direction',
+                    'text': line
+                })
+            i += 1
+            continue
+        
+        # Stage direction labels (not in parentheses)
+        if re.match(r'^[A-Z][a-z]+( [a-z]+)*$', line) and len(line.split()) <= 4:
+            # Things like "Exits", "Pause", "Beat"
+            if line.lower() in ['beat', 'pause', 'exits', 'enters', 'laughs', 'crying']:
+                elements.append({
+                    'type': 'stage_direction',
+                    'text': f"({line})"
+                })
+                i += 1
+                continue
+        
+        # Everything else is dialogue
+        elements.append({
+            'type': 'dialogue',
+            'text': line
+        })
         i += 1
     
-    return elements
+    return title, author, scene_info, elements
 
-def create_docx_document(title, author, scene_info, elements):
-    """Create a Word document using python-docx"""
+def create_formatted_docx(title, author, scene_info, elements):
+    """Create professionally formatted Word document"""
     
     doc = Document()
     
-    # Set default font to Times New Roman 12pt
+    # Set default font
     style = doc.styles['Normal']
     font = style.font
     font.name = 'Times New Roman'
     font.size = Pt(12)
     
-    # Set page margins (1 inch all around)
+    # Set margins
     sections = doc.sections
     for section in sections:
         section.top_margin = Inches(1)
@@ -162,7 +217,6 @@ def create_docx_document(title, author, scene_info, elements):
         section.right_margin = Inches(1)
     
     # COVER PAGE
-    # Add some space from top
     for _ in range(8):
         doc.add_paragraph()
     
@@ -182,32 +236,27 @@ def create_docx_document(title, author, scene_info, elements):
         run.font.name = 'Times New Roman'
         run.font.size = Pt(12)
         
-        # Author name
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         run = p.add_run(author)
         run.font.name = 'Times New Roman'
         run.font.size = Pt(12)
     
-    # PAGE BREAK to start script on new page
+    # Page break
     doc.add_page_break()
     
-    # SCRIPT PAGES
-    # Add scene info at top of first script page
+    # Scene info at top of first script page
     if scene_info:
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         run = p.add_run(scene_info)
         run.font.name = 'Times New Roman'
         run.font.size = Pt(12)
-        
-        # Add space after scene heading
         doc.add_paragraph()
     
-    # Process each element
+    # Process elements
     for element in elements:
         if element['type'] == 'character':
-            # Character name - centered, not bold
             p = doc.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             p.space_before = Pt(12)
@@ -216,7 +265,6 @@ def create_docx_document(title, author, scene_info, elements):
             run.font.size = Pt(12)
             
         elif element['type'] == 'dialogue':
-            # Dialogue - left-aligned, parse inline stage directions
             p = doc.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.LEFT
             
@@ -229,13 +277,10 @@ def create_docx_document(title, author, scene_info, elements):
                     run = p.add_run(segment)
                     run.font.name = 'Times New Roman'
                     run.font.size = Pt(12)
-                    
-                    # Italicize if it's a stage direction
                     if segment.startswith('(') and segment.endswith(')'):
                         run.italic = True
         
         elif element['type'] == 'stage_direction':
-            # Standalone stage direction - italics
             p = doc.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.LEFT
             p.space_before = Pt(6)
@@ -246,7 +291,6 @@ def create_docx_document(title, author, scene_info, elements):
             run.italic = True
         
         elif element['type'] == 'scene_heading':
-            # Scene/Act heading - centered
             p = doc.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             p.space_before = Pt(24)
@@ -256,7 +300,6 @@ def create_docx_document(title, author, scene_info, elements):
             run.font.size = Pt(12)
         
         elif element['type'] == 'setting':
-            # Setting description - italics
             p = doc.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.LEFT
             p.space_before = Pt(12)
@@ -266,7 +309,7 @@ def create_docx_document(title, author, scene_info, elements):
             run.font.size = Pt(12)
             run.italic = True
     
-    # Add END marker
+    # END marker
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p.space_before = Pt(24)
@@ -275,180 +318,128 @@ def create_docx_document(title, author, scene_info, elements):
     run.font.size = Pt(12)
     run.italic = True
     
-    # Add page numbers to header (except first page)
+    # Page numbers
     section = doc.sections[0]
     section.different_first_page_header_footer = True
-    
-    # Header for pages after first (with page number)
     header = section.header
     p = header.paragraphs[0]
     p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    run = p.add_run()
-    run.font.name = 'Times New Roman'
-    run.font.size = Pt(12)
     
-    # Save to BytesIO object
+    # Save to BytesIO
     bio = BytesIO()
     doc.save(bio)
     bio.seek(0)
     
     return bio
 
-# Main tabs
-tab1, tab2, tab3 = st.tabs(["✍️ Write/Edit", "👁️ Preview", "📤 Export"])
+# Main interface
+st.header("📤 Upload Your Script")
 
-with tab1:
-    st.header("Enter Your Play")
+uploaded_file = st.file_uploader(
+    "Choose your script file",
+    type=['pdf', 'docx', 'txt'],
+    help="Upload a PDF, Word document, or text file"
+)
+
+if uploaded_file:
+    st.success(f"✅ File uploaded: {uploaded_file.name}")
     
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        play_title = st.text_input("Play Title*", placeholder="HAMLET")
-        author = st.text_input("Author*", placeholder="William Shakespeare")
-    
-    with col2:
-        scene_info = st.text_input("Scene/Act Info", placeholder="Scene One of One", help="This will appear at top of first script page")
-    
-    # Example script button
-    if st.button("📝 Load Example Script"):
-        st.session_state['script_content'] = """SETTING: A living room, present day.
-
-(SARAH sits reading. MICHAEL enters)
-
-SARAH
-(looking up from her book) Did you hear that?
-
-MICHAEL
-Hear what?
-
-SARAH
-(standing) That sound. Like someone crying.
-
-MICHAEL
-(dismissively) It's just the wind, Sarah.
-
-SARAH
-No, it's more than that. (walks to window) There's someone out there.
-
-MICHAEL
-You're imagining things again."""
-    
-    script_content = st.text_area(
-        "Script Content*",
-        value=st.session_state.get('script_content', ''),
-        height=450,
-        placeholder="Enter your script here...\n\nJOHN\n(enters) Hello, world!"
-    )
-    
-    if script_content:
-        st.session_state['script_content'] = script_content
-        st.session_state['play_title'] = play_title
-        st.session_state['author'] = author
-        st.session_state['scene_info'] = scene_info
-
-with tab2:
-    st.header("Preview")
-    
-    if 'script_content' in st.session_state and st.session_state['script_content']:
-        preview_html = '<div class="preview-play">'
-        
-        if st.session_state.get('play_title'):
-            preview_html += f'<div class="preview-title"><strong>{st.session_state["play_title"]}</strong></div>'
-        if st.session_state.get('author'):
-            preview_html += f'<div class="preview-title">By<br/>{st.session_state["author"]}</div>'
-        
-        preview_html += '<hr style="margin: 40px 0;"/>'
-        
-        if st.session_state.get('scene_info'):
-            preview_html += f'<div class="preview-title"><strong>{st.session_state["scene_info"]}</strong></div>'
-        
-        elements = parse_script_to_structure(st.session_state['script_content'])
-        
-        for element in elements:
-            if element['type'] == 'character':
-                preview_html += f'<p class="preview-character">{element["text"]}</p>'
-            elif element['type'] == 'dialogue':
-                text = element['text']
-                formatted_text = re.sub(r'\(([^)]+)\)', r'<em>(\1)</em>', text)
-                preview_html += f'<p class="preview-dialogue">{formatted_text}</p>'
-            elif element['type'] == 'stage_direction':
-                preview_html += f'<p class="preview-stage">{element["text"]}</p>'
-            elif element['type'] == 'scene_heading':
-                preview_html += f'<p class="preview-title"><strong>{element["text"]}</strong></p>'
-            elif element['type'] == 'setting':
-                preview_html += f'<p class="preview-stage">{element["text"]}</p>'
-        
-        preview_html += '</div>'
-        st.markdown(preview_html, unsafe_allow_html=True)
-    else:
-        st.info("👈 Enter your script in the Write/Edit tab to see a preview")
-
-with tab3:
-    st.header("Export Your Script")
-    
-    if 'script_content' in st.session_state and st.session_state['script_content']:
-        
-        # Check for required fields
-        if not st.session_state.get('play_title') or not st.session_state.get('author'):
-            st.warning("⚠️ Please enter both Play Title and Author in the Write/Edit tab")
+    # Extract text based on file type
+    with st.spinner("Reading your script..."):
+        if uploaded_file.name.endswith('.pdf'):
+            script_text = extract_text_from_pdf(uploaded_file)
+        elif uploaded_file.name.endswith('.docx'):
+            script_text = extract_text_from_docx(uploaded_file)
+        elif uploaded_file.name.endswith('.txt'):
+            script_text = extract_text_from_txt(uploaded_file)
         else:
-            filename = st.text_input(
-                "Filename",
-                value=st.session_state.get('play_title', 'my_play').replace(' ', '_').lower(),
-                help="Enter filename without extension"
-            )
-            
-            if st.button("🎭 Generate Word Document", type="primary"):
-                try:
-                    with st.spinner("Creating your professionally formatted script..."):
-                        # Parse the script
-                        elements = parse_script_to_structure(st.session_state['script_content'])
-                        
-                        # Create the document
-                        doc_file = create_docx_document(
-                            st.session_state.get('play_title', ''),
-                            st.session_state.get('author', ''),
-                            st.session_state.get('scene_info', ''),
-                            elements
-                        )
-                        
-                        st.success("✅ Document created successfully!")
-                        
-                        # Provide download button
-                        st.download_button(
-                            label="📥 Download Word Document (.docx)",
-                            data=doc_file,
-                            file_name=f"{filename}.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                        )
-                        
-                        st.divider()
-                        st.info("""
-                        ✨ **Your script is formatted with:**
-                        - Professional cover page with title and author
-                        - Page numbers in upper right corner (starting page 1)
-                        - Times New Roman 12pt font
-                        - Character names centered (not bold)
-                        - Dialogue left-aligned (not indented)
-                        - Inline stage directions on same line
-                        - Scene/Act info at top of first script page
-                        
-                        💡 **To create a PDF:**
-                        1. Download the .docx file
-                        2. Open in Microsoft Word or Google Docs
-                        3. File → Save As → PDF
-                        """)
-                        
-                except Exception as e:
-                    st.error(f"Error: {str(e)}")
-    else:
-        st.warning("⚠️ Please enter your script in the Write/Edit tab first")
+            st.error("Unsupported file type")
+            script_text = None
+    
+    if script_text:
+        st.success("✅ Script loaded successfully!")
+        
+        # Show preview of original
+        with st.expander("📄 View Original Text (First 500 characters)"):
+            st.text(script_text[:500] + "..." if len(script_text) > 500 else script_text)
+        
+        # Parse the script
+        with st.spinner("Analyzing and reformatting..."):
+            title, author, scene_info, elements = parse_script_intelligently(script_text)
+        
+        # Show detected info
+        st.subheader("📋 Detected Information")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            title = st.text_input("Play Title", value=title or "", help="Edit if needed")
+        with col2:
+            author = st.text_input("Author", value=author or "", help="Edit if needed")
+        with col3:
+            scene_info = st.text_input("Scene Info", value=scene_info or "", help="Edit if needed")
+        
+        st.info(f"✨ Detected {len(elements)} script elements")
+        
+        # Generate formatted document
+        if st.button("🎭 Generate Formatted Script", type="primary"):
+            if not title or not author:
+                st.warning("⚠️ Please provide both Title and Author")
+            else:
+                with st.spinner("Creating professionally formatted document..."):
+                    formatted_doc = create_formatted_docx(title, author, scene_info, elements)
+                
+                st.success("✅ Document formatted successfully!")
+                
+                # Download button
+                filename = title.replace(' ', '_').lower() if title else "formatted_script"
+                st.download_button(
+                    label="📥 Download Formatted Script (.docx)",
+                    data=formatted_doc,
+                    file_name=f"{filename}_formatted.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+                st.divider()
+                st.info("""
+                ✨ **Your script has been reformatted with:**
+                - Professional cover page with title and author
+                - Page numbers in upper right corner (starting page 1)
+                - Times New Roman 12pt font throughout
+                - Character names centered (not bold)
+                - Dialogue left-aligned (not indented)
+                - Stage directions properly formatted in italics
+                - Scene/Act info at top of first script page
+                
+                💡 **To create a PDF:**
+                1. Download the .docx file
+                2. Open in Microsoft Word or Google Docs
+                3. File → Save As → PDF
+                """)
+
+else:
+    st.info("👆 Upload a script file to get started")
+    
+    st.markdown("""
+    ### 📝 Supported Formats:
+    - **PDF** (.pdf) - Most common
+    - **Word** (.docx) - Microsoft Word documents
+    - **Text** (.txt) - Plain text files
+    
+    ### ✨ What We'll Fix:
+    1. Add professional cover page
+    2. Add page numbers in upper right corner
+    3. Format character names (centered, not bold)
+    4. Format dialogue (left-aligned, not indented)
+    5. Format stage directions (italics, inline or standalone)
+    6. Apply Times New Roman 12pt throughout
+    7. Add proper spacing and margins
+    """)
 
 # Footer
 st.divider()
 st.markdown("""
 <div style='text-align: center; color: #666; font-size: 12px; margin-top: 40px;'>
-    <p>The TWNC FaloopinFormatter | Industry-Standard Theatrical Formatting</p>
-    <p>Cloud version - Exports to Microsoft Word (.docx)</p>
+    <p>The TWNC FaloopinFormatter | Professional Script Reformatting</p>
+    <p>Upload → Reformat → Download</p>
 </div>
 """, unsafe_allow_html=True)
